@@ -46,7 +46,7 @@ ComputeLibrary/.done: ${NDK_INSTALLDIR}/.done ${boostdir}/install/.done
 
 ComputeLibrary/build/.done: ComputeLibrary/.done
 	(cd ComputeLibrary && \
-	CXX=clang++ CC=clang scons Werror=1 -j8 debug=0 asserts=1 neon=0 opencl=0 embed_kernels=1 os=android arch=arm64-v8a)
+	CXX=clang++ CC=clang scons Werror=1 -j8 debug=0 asserts=1 neon=1 opencl=0 embed_kernels=1 os=android arch=arm64-v8a)
 	touch $@
 
 #---- PROTOBUF -----
@@ -88,7 +88,7 @@ tf_pb/.done: x86_pb_install/.done tensorflow/.done armnn/.done
 
 #---- ARMNN --------
 
-build_armnn: ${NDK_INSTALLDIR}/.done ComputeLibrary/build/.done tf_pb/.done arm64_pb_install/.done armnn/.done
+armnn_build/.done: ${NDK_INSTALLDIR}/.done ComputeLibrary/build/.done tf_pb/.done arm64_pb_install/.done armnn/.done
 	mkdir -p armnn_build
 	cd armnn_build && CXX=aarch64-linux-android-clang++ \
 	 CC=aarch64-linux-android-clang \
@@ -105,3 +105,6 @@ build_armnn: ${NDK_INSTALLDIR}/.done ComputeLibrary/build/.done tf_pb/.done arm6
 	  -DTF_GENERATED_SOURCES=${topdir}/tf_pb/ -DBUILD_TF_PARSER=1 \
 	  -DPROTOBUF_ROOT=${topdir}/arm64_pb_install/
 	cd armnn_build && make -j8
+	touch $@
+
+armnn: armnn_build/.done
