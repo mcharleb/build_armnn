@@ -108,3 +108,19 @@ armnn_build/.done: ${NDK_INSTALLDIR}/.done ComputeLibrary/build/.done tf_pb/.don
 	touch $@
 
 armnn: armnn_build/.done
+
+#-------------------
+
+test_push: armnn_build/.done
+	adb shell 'mkdir -p /data/local/tmp/armnn'
+	adb push armnn_build/libarmnnTfParser.so /data/local/tmp/armnn/
+	adb push armnn_build/libarmnn.so /data/local/tmp/armnn/
+	adb push armnn_build/UnitTests /data/local/tmp/armnn/
+	adb push ${NDK}/sources/cxx-stl/llvm-libc++/libs/arm64-v8a/libc++_shared.so /data/local/tmp/armnn/
+	adb push ${topdir}/arm64_pb_install/lib/libprotobuf.so /data/local/tmp/armnn/libprotobuf.so.15.0.1
+	adb shell 'rm -f /data/local/tmp/armnn/libprotobuf.so.15 /data/local/tmp/armnn/libprotobuf.so'
+	adb shell 'ln -s libprotobuf.so.15.0.1 /data/local/tmp/armnn/libprotobuf.so.15'
+	adb shell 'ln -s libprotobuf.so.15.0.1 /data/local/tmp/armnn/libprotobuf.so'
+
+test_run:
+	adb shell 'LD_LIBRARY_PATH=/data/local/tmp/armnn /data/local/tmp/armnn/UnitTests'
