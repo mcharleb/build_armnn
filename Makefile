@@ -80,6 +80,7 @@ tensorflow/.done:
 
 armnn/.done:
 	git clone https://github.com/ARM-software/armnn.git
+	cd armnn/third-party && git clone https://github.com/nothings/stb.git
 	touch $@
 
 tf_pb/.done: x86_pb_install/.done tensorflow/.done armnn/.done
@@ -103,7 +104,9 @@ armnn_build/.done: ${NDK_INSTALLDIR}/.done ComputeLibrary/build/.done tf_pb/.don
 	  -DBOOST_ROOT=${topdir}/boost/install/ \
 	  -DARMCOMPUTENEON=1 -DARMCOMPUTECL=0 \
 	  -DTF_GENERATED_SOURCES=${topdir}/tf_pb/ -DBUILD_TF_PARSER=1 \
-	  -DPROTOBUF_ROOT=${topdir}/arm64_pb_install/
+	  -DBUILD_TF_LITE_PARSER=0 \
+	  -DPROTOBUF_ROOT=${topdir}/arm64_pb_install/ \
+	  -DBUILD_TESTS=1
 	cd armnn_build && make -j8
 	touch $@
 
@@ -111,16 +114,44 @@ armnn: armnn_build/.done
 
 #-------------------
 
+unittest_push: armnn_build/.done
+	adb shell 'mkdir -p /data/local/tmp/armnn/unittest'
+	adb push armnn_build/libarmnnTfParser.so /data/local/tmp/armnn/unittest/
+	adb push armnn_build/libarmnn.so /data/local/tmp/armnn/unittest/
+	adb push armnn_build/UnitTests /data/local/tmp/armnn/unittest/
+	adb push ${NDK}/sources/cxx-stl/llvm-libc++/libs/arm64-v8a/libc++_shared.so /data/local/tmp/armnn/unittest/
+	adb push ${topdir}/arm64_pb_install/lib/libprotobuf.so /data/local/tmp/armnn/unittest/libprotobuf.so.15.0.1
+	adb shell 'rm -f /data/local/tmp/armnn/unittest/libprotobuf.so.15 /data/local/tmp/armnn/unittest/libprotobuf.so'
+	adb shell 'ln -s libprotobuf.so.15.0.1 /data/local/tmp/armnn/unittest/libprotobuf.so.15'
+	adb shell 'ln -s libprotobuf.so.15.0.1 /data/local/tmp/armnn/unittest/libprotobuf.so'
+
+unittest_run:
+	adb shell 'LD_LIBRARY_PATH=/data/local/tmp/armnn/unitest /data/local/tmp/armnn/unittest/UnitTests'
+
 test_push: armnn_build/.done
-	adb shell 'mkdir -p /data/local/tmp/armnn'
-	adb push armnn_build/libarmnnTfParser.so /data/local/tmp/armnn/
-	adb push armnn_build/libarmnn.so /data/local/tmp/armnn/
-	adb push armnn_build/UnitTests /data/local/tmp/armnn/
-	adb push ${NDK}/sources/cxx-stl/llvm-libc++/libs/arm64-v8a/libc++_shared.so /data/local/tmp/armnn/
-	adb push ${topdir}/arm64_pb_install/lib/libprotobuf.so /data/local/tmp/armnn/libprotobuf.so.15.0.1
-	adb shell 'rm -f /data/local/tmp/armnn/libprotobuf.so.15 /data/local/tmp/armnn/libprotobuf.so'
-	adb shell 'ln -s libprotobuf.so.15.0.1 /data/local/tmp/armnn/libprotobuf.so.15'
-	adb shell 'ln -s libprotobuf.so.15.0.1 /data/local/tmp/armnn/libprotobuf.so'
+	adb shell 'mkdir -p /data/local/tmp/armnn/tests'
+	adb push armnn_build/libarmnnTfParser.so /data/local/tmp/armnn/tests/
+	adb push armnn_build/libarmnn.so /data/local/tmp/armnn/tests/
+	adb push armnn_build/tests/* /data/local/tmp/armnn/tests/
+	adb push ${NDK}/sources/cxx-stl/llvm-libc++/libs/arm64-v8a/libc++_shared.so /data/local/tmp/armnn/tests/
+	adb push ${topdir}/arm64_pb_install/lib/libprotobuf.so /data/local/tmp/armnn/tests/libprotobuf.so.15.0.1
+	adb shell 'rm -f /data/local/tmp/armnn/tests/libprotobuf.so.15 /data/local/tmp/armnn/tests/libprotobuf.so'
+	adb shell 'ln -s libprotobuf.so.15.0.1 /data/local/tmp/armnn/tests/libprotobuf.so.15'
+	adb shell 'ln -s libprotobuf.so.15.0.1 /data/local/tmp/armnn/tests/libprotobuf.so'
+	adb push models/inputs/Dog_224x224.snpy /data/local/tmp/armnn/tests/ 
+	adb push models/tflite/mobilenet_v1_0.25_224_quant.tflite /data/local/tmp/armnn/tests/ 
+	adb push models/tf/mobilenet_v2_1.4_224_frozen.pb /data/local/tmp/armnn/tests/ 
 
 test_run:
-	adb shell 'LD_LIBRARY_PATH=/data/local/tmp/armnn /data/local/tmp/armnn/UnitTests'
+	adb shell 'LD_LIBRARY_PATH=/data/local/tmp/armnn/tests /data/local/tmp/armnn/tests/ExecuteNetwork --compute Hexagon --compute CpuAcc --model-format tensorflow-binary --model-path /data/local/tmp/armnn/tests/mobilenet_v2_1.4_224_frozen.pb --input-tensor-shape 1,224,224,3 --input-type float --input-name input --output-name MobilenetV2/Predictions/Reshape_1 --input-tensor-data /data/local/tmp/armnn/tests/Dog_224x224.snpy --event-based-profiling' > result
+
+models/.done:
+	mkdir -p models/tflite
+	cd models/tflite && wget http://download.tensorflow.org/models/mobilenet_v1_2018_08_02/mobilenet_v1_0.25_224_quant.tgz && tar xf mobilenet_v1_0.25_224_quant.tgz
+	mkdir -p models/tf
+	cd models/tf && wget https://storage.googleapis.com/mobilenet_v2/checkpoints/mobilenet_v2_1.4_224.tgz && tar xf mobilenet_v2_1.4_224.tgz
+	touch $@
+
+	
+
+
