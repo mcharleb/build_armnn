@@ -9,11 +9,13 @@ export PATH := ${NDK_INSTALLDIR}/bin:$(PATH)
 #----- NDK --------
 
 ${NDK}/.done:
-	wget https://dl.google.com/android/repository/android-ndk-r17c-linux-x86_64.zip
+	rm -rf android-ndk-r17c
+	[ -f android-ndk-r17c-linux-x86_64.zip ] || wget https://dl.google.com/android/repository/android-ndk-r17c-linux-x86_64.zip
 	unzip android-ndk-r17c-linux-x86_64.zip
 	touch $@
 
 ${NDK_INSTALLDIR}/.done: ${NDK}/.done
+	rm -rf toolchains/aarch-android-r17c
 	${NDK}/build/tools/make_standalone_toolchain.py \
 	    --arch arm64 \
 	    --api 26 \
@@ -24,11 +26,12 @@ ${NDK_INSTALLDIR}/.done: ${NDK}/.done
 #---- BOOST -------
 
 boost_1_64_0/.done:
-	wget https://dl.bintray.com/boostorg/release/1.64.0/source/boost_1_64_0.tar.bz2	
+	rm -rf boost_1_64_0
+	[ -f boost_1_64_0.tar.bz2 ] || wget https://dl.bintray.com/boostorg/release/1.64.0/source/boost_1_64_0.tar.bz2
 	tar xvjf boost_1_64_0.tar.bz2
 	touch $@
 
-${boostdir}/install/.done: ${NDK_INSTALLDIR}/.done boost_1_64_0/.done
+boost_1_64_0/install/.done: ${NDK_INSTALLDIR}/.done boost_1_64_0/.done
 	echo ${PATH}
 	echo "using gcc : arm : aarch64-linux-android-clang++ ;" > ${boostdir}/user-config.jam
 	(cd ${boostdir} && \
@@ -41,6 +44,7 @@ ${boostdir}/install/.done: ${NDK_INSTALLDIR}/.done boost_1_64_0/.done
 #------ ACL -------
 
 ComputeLibrary/.done: ${NDK_INSTALLDIR}/.done ${boostdir}/install/.done
+	rm -rf ComputeLibrary
 	git clone https://github.com/ARM-software/ComputeLibrary.git
 	touch $@
 
@@ -52,16 +56,19 @@ ComputeLibrary/build/.done: ComputeLibrary/.done
 #---- PROTOBUF -----
 
 protobuf/.done:
+	rm -rf protobuf
 	git clone https://github.com/google/protobuf.git
 	cd protobuf && git checkout -b v3.5.2 v3.5.2 && ./autogen.sh
 	touch $@
 
 x86_pb_install/.done: protobuf/.done
+	rm -rf `dirname $@` arm64_pb_build
 	mkdir -p x86_pb_build
 	cd x86_pb_build && ../protobuf/configure --prefix=${topdir}/x86_pb_install && make install -j8
 	touch $@
 
-arm64_pb_install/.done: ${NDK_INSTALLDIR}/.done x86_pb_install/.done arm64_pb_build/.done
+arm64_pb_install/.done: ${NDK_INSTALLDIR}/.done x86_pb_install/.done
+	rm -rf `dirname $@` arm64_pb_build
 	mkdir -p arm64_pb_build
 	cd arm64_pb_build && CC=aarch64-linux-android-clang \
 	   CXX=aarch64-linux-android-clang++ \
@@ -75,11 +82,13 @@ arm64_pb_install/.done: ${NDK_INSTALLDIR}/.done x86_pb_install/.done arm64_pb_bu
 #------ TF PB ------
 
 tensorflow/.done:
+	rm -rf tensorflow
 	git clone https://github.com/tensorflow/tensorflow.git
 	touch $@
 
 armnn/.done:
-	git clone https://github.com/ARM-software/armnn.git
+	rm -rf armnn
+	git clone https://github.com/mcharleb/armnn.git -b hexagon-backend
 	cd armnn/third-party && git clone https://github.com/nothings/stb.git
 	touch $@
 
@@ -90,6 +99,7 @@ tf_pb/.done: x86_pb_install/.done tensorflow/.done armnn/.done
 #---- ARMNN --------
 
 armnn_build/.done: ${NDK_INSTALLDIR}/.done ComputeLibrary/build/.done tf_pb/.done arm64_pb_install/.done armnn/.done
+	rm -rf armnn_build
 	mkdir -p armnn_build
 	cd armnn_build && CXX=aarch64-linux-android-clang++ \
 	 CC=aarch64-linux-android-clang \
@@ -101,7 +111,7 @@ armnn_build/.done: ${NDK_INSTALLDIR}/.done ComputeLibrary/build/.done tf_pb/.don
 	  -DCMAKE_EXE_LINKER_FLAGS="-pie -llog" \
 	  -DARMCOMPUTE_ROOT=${topdir}/ComputeLibrary/ \
 	  -DARMCOMPUTE_BUILD_DIR=${topdir}/ComputeLibrary/build \
-	  -DBOOST_ROOT=${topdir}/boost/install/ \
+	  -DBOOST_ROOT=${boostdir}/install/ \
 	  -DARMCOMPUTENEON=1 -DARMCOMPUTECL=0 \
 	  -DTF_GENERATED_SOURCES=${topdir}/tf_pb/ -DBUILD_TF_PARSER=1 \
 	  -DBUILD_TF_LITE_PARSER=0 \
@@ -142,16 +152,33 @@ test_push: armnn_build/.done
 	adb push models/tflite/mobilenet_v1_0.25_224_quant.tflite /data/local/tmp/armnn/tests/ 
 	adb push models/tf/mobilenet_v2_1.4_224_frozen.pb /data/local/tmp/armnn/tests/ 
 
-test_run:
+test_float:
 	adb shell 'LD_LIBRARY_PATH=/data/local/tmp/armnn/tests /data/local/tmp/armnn/tests/ExecuteNetwork --compute Hexagon --compute CpuAcc --model-format tensorflow-binary --model-path /data/local/tmp/armnn/tests/mobilenet_v2_1.4_224_frozen.pb --input-tensor-shape 1,224,224,3 --input-type float --input-name input --output-name MobilenetV2/Predictions/Reshape_1 --input-tensor-data /data/local/tmp/armnn/tests/Dog_224x224.snpy --event-based-profiling' > result
 
+test_quant:
+	adb shell 'LD_LIBRARY_PATH=/data/local/tmp/armnn/tests /data/local/tmp/armnn/tests/ExecuteNetwork --compute Hexagon --compute CpuAcc --model-format tensorflow-binary --model-path /data/local/tmp/armnn/tests/mobilenet_v1_1.0_224_quant.pb --input-tensor-shape 1,224,224,3 --input-type qasymm8 --input-name input --output-name MobilenetV2/Predictions/Reshape_1 --input-tensor-data /data/local/tmp/armnn/tests/Dog_224x224.snpy --event-based-profiling' > result
+
 models/.done:
-	mkdir -p models/tflite
-	cd models/tflite && wget http://download.tensorflow.org/models/mobilenet_v1_2018_08_02/mobilenet_v1_0.25_224_quant.tgz && tar xf mobilenet_v1_0.25_224_quant.tgz
 	mkdir -p models/tf
-	cd models/tf && wget https://storage.googleapis.com/mobilenet_v2/checkpoints/mobilenet_v2_1.4_224.tgz && tar xf mobilenet_v2_1.4_224.tgz
+	cd models && ./fetch_models.sh
 	touch $@
 
-	
+clean:
+	rm -f models/.done
+	rm -f armnn/.done
+	rm -f armnn/.done
+	rm -f armnn_build/.done
+	rm -f x86_pb_install/.done
+	rm -f arm64_pb_install/.done
+	rm -f protobuf/.done
+	rm -f ${NDK}/.done
+	rm -f ${NDK_INSTALLDIR}/.done
+	rm -f ComputeLibrary/.done
+	rm -f ComputeLibrary/build/.done
+	rm -f ${boostdir}/.done
+	rm -f ${boostdir}/install/.done
+	rm -f tensorflow/.done
+	rm -f tf_pb/.done
+
 
 
